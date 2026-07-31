@@ -199,6 +199,23 @@ def campo_perfil(p, *nombres, defecto=None):
     return defecto
 
 
+# Pistas de bio para el canal de seguidos. No definen el tema (eso lo decide el
+# puntaje contra el corpus): solo evitan pagar una muestra por el dentista y el
+# club de futbol que la cuenta de referencia tambien sigue.
+PISTAS_BIO = """
+psicoanal psicolog psiquiatr terapeut terapia clinic freud lacan winnicott
+analista inconsciente deseo subjetiv filosof pensamiento escritura escritor
+poeta poesia literatura letras salud mental emocion duelo vinculo apego
+humanidades docente catedra ensayo reflexion palabra
+""".split()
+
+
+def bio_promete(c):
+    texto = normalizar((campo_perfil(c, "description", defecto="") or "") + " "
+                       + (campo_perfil(c, "name", defecto="") or ""))
+    return any(k in texto for k in PISTAS_BIO)
+
+
 def prefiltrar(candidatos, referencia_handle):
     """
     Descarta lo que no puede ser una cuenta de divulgacion hispanohablante viva,
@@ -222,6 +239,13 @@ def prefiltrar(candidatos, referencia_handle):
         posts = campo_perfil(c, "statusesCount", "statuses_count", defecto=0) or 0
         if posts < 200:
             descartes["menos de 200 posts"] += 1
+            continue
+
+        # Los canales de busqueda y menciones ya llegaron por el tema o por la
+        # conversacion. El de seguidos es el ruidoso: ahi si pedimos senal en la bio.
+        origen = set(c.get("_origen", ()))
+        if origen == {"seguidos"} and not bio_promete(c):
+            descartes["seguida sin senal tematica en la bio"] += 1
             continue
 
         pasan.append(c)
