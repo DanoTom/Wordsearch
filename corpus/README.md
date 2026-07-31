@@ -4,11 +4,12 @@ Baja los posts de una cuenta pública de X con la API de
 [twitterapi.io](https://twitterapi.io) y los arma en un `.md` ordenado
 cronológicamente, con los hilos reconstruidos como bloque único.
 
-## Los dos scripts
+## Los scripts
 
 ```
-bajar_corpus.py    baja los posts y los guarda crudos en un .jsonl
-exportar_md.py     lee el .jsonl y arma el .md
+bajar_corpus.py       baja los posts y los guarda crudos en un .jsonl
+exportar_md.py        lee el .jsonl y arma el .md
+buscar_similares.py   arma un listado de cuentas afines por grafo de seguidos
 ```
 
 El `.jsonl` crudo es **la fuente de verdad** y no se toca nunca: volver a
@@ -17,20 +18,29 @@ sin gastar un centavo.
 
 ## Uso
 
+Cuenta en curso: **@ePerezJandette** (psicoanálisis, filosofía del lenguaje;
+activa al menos entre abril 2024 y octubre 2025).
+
 ```bash
 export TWITTERAPI_IO_KEY="tu_api_key"
 
 # 1. Prueba: baja un solo mes, para ver que la key funciona y qué trae
-python bajar_corpus.py --user HANDLE --ultimos 1500 --prueba
+python bajar_corpus.py --user ePerezJandette --ultimos 1500 --sin-respuestas --prueba
 
 # 2. Ver la estructura real de los datos y el mapeo de campos
-python exportar_md.py --jsonl corpus_HANDLE.jsonl --inspeccionar
+python exportar_md.py --jsonl corpus_ePerezJandette.jsonl --inspeccionar
 
 # 3. Bajada completa (reanudable: si se corta, relanzá lo mismo)
-python bajar_corpus.py --user HANDLE --ultimos 1500
+python bajar_corpus.py --user ePerezJandette --ultimos 1500 --sin-respuestas
 
 # 4. Armar el documento
-python exportar_md.py --jsonl corpus_HANDLE.jsonl
+python exportar_md.py --jsonl corpus_ePerezJandette.jsonl
+
+# 5. Cuentas afines. Primero verificar las rutas de la API, después estimar,
+#    y recién ahí correrlo en serio.
+python buscar_similares.py --user ePerezJandette --verificar
+python buscar_similares.py --user ePerezJandette --estimar
+python buscar_similares.py --user ePerezJandette --top 100 --solo-hispano
 ```
 
 `--ultimos N` camina mes a mes hacia atrás desde hoy hasta juntar N posts, así

@@ -50,17 +50,21 @@ RUTAS_PERFIL = (
 
 PRECIO_POR_ITEM_USD = 0.00015
 
-# Palabras funcionales que casi solo aparecen en castellano. Sirven para
-# descartar bios en ingles o portugues sin traer una dependencia de idioma.
+# Deteccion de idioma por palabras funcionales, no tematicas: son las que
+# aparecen en cualquier bio del idioma sea cual sea el tema. Meter aca palabras
+# de dominio ("ciencia", "profesor") sesgaria la deteccion hacia un nicho.
 MARCAS_ES = re.compile(
-    r"\b(de|que|para|con|una|los|las|del|por|como|sobre|entre|hacia|"
-    r"divulgacion|divulgación|ciencia|historia|profesor|escritor|autor|"
-    r"periodista|investigador|doctor|licenciado|cuenta|hilos|aqui|aquí)\b",
+    r"\b(el|la|los|las|del|de|que|para|con|una|uno|por|como|sobre|entre|"
+    r"hacia|desde|pero|porque|cuando|donde|dónde|aqui|aquí|mas|más|muy|"
+    r"todo|toda|sin|segun|según|tambien|también|este|esta|esto|ese|esa|"
+    r"soy|somos|hago|escribo)\b",
     re.IGNORECASE,
 )
+# Portugues comparte mucho con el castellano: se lo pesca por sus marcas
+# propias, no por las compartidas.
 MARCAS_NO_ES = re.compile(
-    r"\b(the|and|with|from|about|research|writer|author|host|founder|"
-    r"professor|science|history|nao|não|voce|você|obrigado)\b",
+    r"\b(the|and|with|from|about|for|this|that|who|here|writer|host|"
+    r"nao|não|voce|você|sou|obrigado|muito|coisa|isso|pelo|pela)\b",
     re.IGNORECASE,
 )
 
@@ -171,14 +175,30 @@ def campo_u(u, *nombres):
 
 
 def parece_hispano(u):
-    """Heuristica sobre bio y nombre. No es deteccion de idioma seria."""
+    """
+    Heuristica sobre bio y nombre. No es deteccion de idioma seria.
+
+    Devuelve True, False, o None cuando no hay evidencia suficiente. El None
+    importa: en un nicho de bios cortas, dar por no-hispana a una cuenta sin
+    marcas seria descartarla en silencio. Ante la duda decide la persona.
+    """
     texto = " ".join(str(campo_u(u, x) or "") for x in
                      ("description", "bio", "name", "location"))
     if not texto.strip():
-        return None  # sin datos: que decida la persona
-    if re.search(r"[ñáéíóúü¿¡]", texto, re.IGNORECASE):
+        return None
+
+    # Los acentos agudos son compartidos con el portugues, asi que no sirven.
+    # Estas si son marcas propias de cada idioma.
+    if re.search(r"[ãõç]", texto, re.IGNORECASE):
+        return False
+    if re.search(r"[ñ¿¡]", texto, re.IGNORECASE):
         return True
-    return len(MARCAS_ES.findall(texto)) > len(MARCAS_NO_ES.findall(texto))
+
+    es = len(MARCAS_ES.findall(texto))
+    no = len(MARCAS_NO_ES.findall(texto))
+    if es == no:          # incluye el caso 0 a 0: bio sin palabras funcionales
+        return None
+    return es > no
 
 
 def main():
