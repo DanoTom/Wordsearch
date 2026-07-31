@@ -10,3 +10,7 @@ corpus/*.md
 # Credenciales: nunca.
 .env
 *.key
+
+# Cache de bytecode
+__pycache__/
+*.pyc

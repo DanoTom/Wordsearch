@@ -105,7 +105,20 @@ AUTOAYUDA = (
                r"chakra|alma\s+gemela|el\s+universo\s+conspira|sanacion|"
                r"holistic|frecuencia\s+vibratoria)", re.I),
     re.compile(r"^[^a-z\n]{14,}$", re.M),   # titular en mayusculas sostenidas
+    # Astrologia y esoterismo: comparten el vocabulario del animo y el vinculo,
+    # pero no son divulgacion de nada del campo.
+    re.compile(r"\b(luna\s+en|sol\s+en|mercurio\s+retrogrado|carta\s+natal|"
+               r"horoscopo|ascendente\s+en|signo\s+solar|sextil|trigono|"
+               r"conjuncion\s+de|piscis|acuario|escorpio|sagitario|capricornio)\b", re.I),
 )
+
+# La escritura de la referencia es impersonal: enuncia, no cuenta su dia. Este
+# es el discriminador que faltaba, porque el vocabulario del campo no alcanza:
+# la propia referencia solo nombra el campo en el 30% de sus posts originales,
+# igual que una cuenta de charla que estudia psicologia.
+PRIMERA_PERSONA = re.compile(
+    r"\b(yo|me|mi|mis|conmigo|mio|mia|acabo\s+de|hoy|ayer|anoche|estoy|tengo|"
+    r"fui|voy)\b", re.I)
 
 # Cuentas que no son una voz: editoriales, medios, catedras, instituciones.
 INSTITUCION = re.compile(
@@ -196,6 +209,18 @@ def topicalidad(textos):
         return 0.0
     dentro = sum(1 for t in textos if any(w in CAMPO for w in tokenizar(t)))
     return dentro / len(textos)
+
+
+def densidad_anecdota(textos):
+    """
+    Fraccion de posts en primera persona o en el presente inmediato. Mide cuanto
+    de la cuenta es anecdota personal en vez de enunciado. La referencia esta en
+    0,15; las cuentas de charla, entre 0,50 y 0,75.
+    """
+    if not textos:
+        return 0.0
+    return sum(1 for t in textos
+               if PRIMERA_PERSONA.search(normalizar(re.sub(r"https?://\S+", "", t)))) / len(textos)
 
 
 def densidad_link(textos):
@@ -447,6 +472,9 @@ def main():
                     help="fraccion maxima de posts con marcas de autoayuda (default: 0.25)")
     ap.add_argument("--min-topicalidad", type=float, default=0.15,
                     help="fraccion minima de posts que tocan el campo (default: 0.15)")
+    ap.add_argument("--max-anecdota", type=float, default=0.40,
+                    help="fraccion maxima de posts en primera persona; arriba de eso "
+                         "es una cuenta de charla personal (default: 0.40)")
     ap.add_argument("--max-links", type=float, default=0.45,
                     help="fraccion maxima de posts con enlace; arriba de eso es una "
                          "marca o un medio, no una voz (default: 0.45)")
@@ -461,24 +489,34 @@ def main():
     carpeta = Path(args.dir)
 
     # ---- Perfil de la referencia ----
-    textos_ref = []
+    textos_ref, originales_ref = [], []
     for linea in ruta_ref.open(encoding="utf-8"):
         try:
             o = json.loads(linea)
         except json.JSONDecodeError:
             continue
-        if not o.get("retweeted_tweet"):
-            textos_ref.append(o.get("text") or "")
+        if o.get("retweeted_tweet"):
+            continue
+        textos_ref.append(o.get("text") or "")
+        # Las muestras de los candidatos vienen casi todas sin respuestas, asi
+        # que las referencias de consistencia y anecdota se miden contra los
+        # posts originales: comparar timelines enteros contra originales inclina
+        # la balanza sin que se note.
+        if not o.get("inReplyToId"):
+            originales_ref.append(o.get("text") or "")
     if not textos_ref:
         sys.exit("El corpus de referencia no tiene textos legibles")
 
     lex_ref = perfil_lexico(textos_ref)
+    topico_ref = topicalidad(originales_ref or textos_ref)
+    anecdota_ref = densidad_anecdota(originales_ref or textos_ref)
     jerga_ref = densidad_jerga(textos_ref)
     acad_ref = densidad_academica(textos_ref)
     largo_ref = largo_mediano(textos_ref)
-    print(f"Referencia @{usuario}: {len(textos_ref)} posts, "
-          f"largo mediano {largo_ref}, jerga {jerga_ref*1000:.2f}‰, "
-          f"marcas academicas {acad_ref*100:.1f}%\n")
+    print(f"Referencia @{usuario}: {len(textos_ref)} posts "
+          f"({len(originales_ref)} originales), largo mediano {largo_ref}, "
+          f"jerga {jerga_ref*1000:.2f}‰, marcas academicas {acad_ref*100:.1f}%, "
+          f"topicalidad {topico_ref:.2f}, anecdota {anecdota_ref:.2f}\n")
 
     # ---- Candidatos ----
     candidatos = []
@@ -578,6 +616,11 @@ def main():
             descartes2["postea mas enlaces que texto (marca o medio)"] += 1
             continue
 
+        anecdota = densidad_anecdota(textos)
+        if anecdota > args.max_anecdota:
+            descartes2["cuenta de charla personal, no de enunciado"] += 1
+            continue
+
         # ---- Ejes ----
         afinidad = afinidad_firma(lex, pesos)
 
@@ -596,13 +639,23 @@ def main():
         registro = 1.0 - (0.30 * pena_jerga + 0.20 * pena_acad
                           + 0.30 * pena_largo + 0.20 * pena_autoayuda)
         registro = max(0.0, registro)
+
+        # La consistencia entra al puntaje, no solo a la aduana. Una cuenta que
+        # habla del campo en 3 de 20 posts y el resto es charla personal no es
+        # "un poco afin": es otra cosa que a veces roza el tema. El techo es el
+        # valor medido de la propia referencia, no un numero elegido a dedo:
+        # llegar a su nivel de consistencia ya es dar en el blanco.
+        consistencia = min(1.0, topico / max(topico_ref, 0.05))
+
         # Sin piso: una cuenta con el registro equivocado no conserva medio
         # puntaje por hablar del mismo tema.
-        puntaje = afinidad * registro
+        puntaje = afinidad * registro * consistencia
 
         filas.append({
             "autoayuda": autoayuda,
             "topicalidad": topico,
+            "anecdota": anecdota,
+            "consistencia": consistencia,
             "links": links,
             "handle": campo_perfil(c, "userName", "screen_name", defecto=h),
             "nombre": campo_perfil(c, "name", defecto=""),
