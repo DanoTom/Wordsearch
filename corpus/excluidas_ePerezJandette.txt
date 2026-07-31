@@ -1,0 +1,30 @@
+# Cuentas descartadas a mano, despues de leer sus posts.
+#
+# El puntaje automatico las dejo pasar porque comparten vocabulario con la
+# referencia, pero al leerlas no son lo que se busca. Lo que un script no
+# distingue todavia queda anotado aca, con el motivo, para que la proxima
+# corrida no las vuelva a proponer y para que se vea por que salieron.
+#
+# Formato: handle  # motivo
+
+homosentiens      # charla de redes y politica argentina
+PsicoApigmalion   # conversacion suelta, no divulga
+dannyviLe         # politica uruguaya
+nathalievga       # apodos de mascotas y clima
+DigresionXII      # cripticos sueltos, sin hilo tematico
+Roberttpa         # comentarios sueltos sin campo
+filosofiaminuto   # quejas cotidianas y terraplanismo, no filosofia
+criiz_pg          # futbol
+psicoayudaesp     # respuestas de una palabra y emojis
+markitos045       # novedades personales de su doctorado
+xfabianasolanox   # politica; ademas muestra de 5 posts
+gonzalohervas     # quejas de banco y gremiales
+hebesil           # politica mendocina y futbol
+RiquelmeyLacan    # futbol con barniz lacaniano
+dinolanti         # promocion de resenas de su libro
+fasccionera       # citas sueltas de teoria, muestra de 8 posts
+PiterRaskol       # aforismos sueltos, muestra de 6 posts
+Infomedicos       # anecdotario medico gremial, otro registro
+soymamasola       # marca de autonomia femenina con hashtags
+JulietaSagnay     # salud mental en clave de tips y RT
+thairkassam       # psicoeducacion en formato de consejo masivo

@@ -91,8 +91,10 @@ def main():
                 o = json.loads(linea)
             except json.JSONDecodeError:
                 continue
-            cache[o["_handle"]] = o["tweets"]
-            if o.get("_hondo"):
+            previo = cache.get(o["_handle"])
+            if previo is None or len(o["tweets"]) > len(previo):
+                cache[o["_handle"]] = o["tweets"]
+            if o.get("_hondo") and o["tweets"]:
                 hondas.add(o["_handle"])
     print(f"Cache: {len(cache)} cuentas, {len(hondas)} ya profundizadas")
 

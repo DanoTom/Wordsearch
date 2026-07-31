@@ -395,7 +395,12 @@ def traer_muestras(sesion, headers, handles, cache_ruta):
                     o = json.loads(linea)
                 except json.JSONDecodeError:
                     continue
-                cache[o["_handle"]] = o["tweets"]
+                # Nos quedamos con la muestra mas grande por handle, no con la
+                # ultima: una profundizacion que volvio vacia (cuenta caida,
+                # cursor cortado) no debe pisar la muestra corta que si sirve.
+                previo = cache.get(o["_handle"])
+                if previo is None or len(o["tweets"]) > len(previo):
+                    cache[o["_handle"]] = o["tweets"]
 
     faltan = [h for h in handles if h not in cache]
     print(f"  muestras en cache: {len(cache)}; faltan {len(faltan)}")
@@ -472,6 +477,14 @@ def main():
                     help="fraccion maxima de posts con marcas de autoayuda (default: 0.25)")
     ap.add_argument("--min-topicalidad", type=float, default=0.15,
                     help="fraccion minima de posts que tocan el campo (default: 0.15)")
+    ap.add_argument("--excluir",
+                    help="archivo con handles descartados a mano, uno por linea "
+                         "(admite comentarios con #). La lectura humana corrige lo "
+                         "que el puntaje todavia no distingue")
+    ap.add_argument("--min-muestra", type=int, default=5,
+                    help="posts minimos para puntuar una cuenta. Con 20 el registro "
+                         "todavia es ruido de muestreo; para el listado final conviene "
+                         "40 o mas, previo profundizar_muestras.py (default: 5)")
     ap.add_argument("--max-anecdota", type=float, default=0.40,
                     help="fraccion maxima de posts en primera persona; arriba de eso "
                          "es una cuenta de charla personal (default: 0.40)")
@@ -527,7 +540,19 @@ def main():
             continue
     print(f"Candidatos crudos: {len(candidatos)}")
 
+    excluidas = set()
+    if args.excluir and Path(args.excluir).exists():
+        for linea in Path(args.excluir).read_text(encoding="utf-8").splitlines():
+            linea = linea.split("#")[0].strip().lstrip("@")
+            if linea:
+                excluidas.add(linea.lower())
+        print(f"Excluidas a mano: {len(excluidas)}")
+
     pasan, descartes = prefiltrar(candidatos, usuario)
+    if excluidas:
+        antes = len(pasan)
+        pasan = [c for c in pasan if c["_handle"] not in excluidas]
+        descartes["descartada a mano tras leerla"] = antes - len(pasan)
     print(f"Pasan el prefiltro: {len(pasan)}")
     for motivo, n in descartes.most_common():
         print(f"  descartados por {motivo}: {n}")
@@ -541,7 +566,12 @@ def main():
         if cache_ruta.exists():
             for linea in cache_ruta.open(encoding="utf-8"):
                 o = json.loads(linea)
-                cache[o["_handle"]] = o["tweets"]
+                # Nos quedamos con la muestra mas grande por handle, no con la
+                # ultima: una profundizacion que volvio vacia (cuenta caida,
+                # cursor cortado) no debe pisar la muestra corta que si sirve.
+                previo = cache.get(o["_handle"])
+                if previo is None or len(o["tweets"]) > len(previo):
+                    cache[o["_handle"]] = o["tweets"]
         print(f"  modo sin-bajar: {len(cache)} muestras en cache")
     else:
         print("\nMuestras de posts:")
@@ -565,8 +595,8 @@ def main():
         h = c["_handle"]
         muestra = cache.get(h, [])
         propios = [t for t in muestra if not t.get("esRT") and t.get("text")]
-        if len(propios) < 5:
-            descartes2["muestra insuficiente o cuenta vacia"] += 1
+        if len(propios) < args.min_muestra:
+            descartes2[f"muestra menor a {args.min_muestra} posts para juzgar"] += 1
             continue
 
         langs = Counter(t.get("lang") for t in propios)
@@ -671,6 +701,7 @@ def main():
             "largo": largo,
             "ultimo": max(fechas),
             "etiqueta": etiquetar(lex),
+            "muestra": len(propios),
             "ejemplo": max(textos, key=len).replace("\n", " ").strip(),
         })
 
@@ -715,6 +746,7 @@ def main():
         p.append(f"\n### {i}. [@{r['handle']}](https://x.com/{r['handle']}) — {r['nombre']}\n\n")
         p.append(f"{r['seguidores']:,} seguidores · {r['posts']:,} posts · "
                  f"último {r['ultimo']:%Y-%m-%d} · {r['etiqueta']}  \n")
+        p.append(f"<sub>juzgada sobre {r['muestra']} posts</sub>  \n")
         p.append(f"afinidad {r['afinidad']:.3f} · registro {r['registro']:.2f} · "
                  f"largo mediano {r['largo']} car. · descubierta por "
                  f"{', '.join(r['origen']) or 'n/d'}")
