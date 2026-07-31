@@ -68,15 +68,52 @@ vez y ya
 # la presencia: una cita suelta no vuelve academica a una cuenta.
 JERGA = set("""
 significante significantes forclusion forclusiva matema matemas lalengua
-borromeo borromeano sinthome sinthoma metapsicologia topica toposica
-epistemologia hermeneutica fenomenologico fenomenologica ontologico ontologica
+borromeo borromeano sinthome sinthoma metapsicologia topica epistemologia
+hermeneutica fenomenologico fenomenologica ontologico ontologica
 esquizoanalisis grafo automaton tyche agalma extimidad extimo parletre
 holofrase discordancial semblante semblantes retroaccion aprescoup
 significantizacion simbolizacion imaginarizacion pulsional pulsionales
 metonimia metonimico condensacion desplazamiento supervision cartel carteles
-psicopatologia nosografia nosologia estructural estructurales diacronico
-sincronico epistemico praxis teleologico dialectica dialectico
+psicopatologia nosografia nosologia diacronico sincronico epistemico praxis
+teleologico dialectica dialectico libidica libidinal catexis anaclitico
 """.split())
+
+# Vocabulario del campo. No define el ranking (eso lo hace el parecido con el
+# corpus real): sirve de aduana, para que no entre una cuenta de politica que
+# comparte con la referencia cuatro palabras emotivas y nada mas.
+CAMPO = set("""
+psicoanalisis psicoanalitico psicoanalista analizante analista inconsciente
+deseo sujeto goce pulsion transferencia sintoma freud lacan jung winnicott
+psicologia psicologo psicologa psicoterapia terapia terapeuta paciente
+angustia duelo trauma apego subjetividad psiquico psiquica psiquismo
+neurosis melancolia narcisismo represion libido
+filosofia filosofico filosofa ontologia metafisica existencial
+""".split())
+
+# Autoayuda y pseudociencia. Comparten el tema con la referencia (el amor, el
+# dolor, el vinculo) pero no el genero: prometen resultados en vez de abrir
+# preguntas. Es exactamente lo que hay que dejar afuera.
+AUTOAYUDA = (
+    re.compile(r"\bel\s+(secreto|truco)\b", re.I),
+    re.compile(r"\b\d+\s+(claves|razones|pasos|habitos|senales|tips|frases)\b", re.I),
+    re.compile(r"\b(deja|empieza|comienza)\s+de?\s+\w+", re.I),
+    re.compile(r"\btu\s+vida\s+(cambia|cambiara)\b", re.I),
+    re.compile(r"\b(abro|va)\s+hilo\b", re.I),
+    re.compile(r"\b(guarda|comparte|sigueme|siguelo)\b", re.I),
+    re.compile(r"\b(biodescodificacion|descodificacion|epigenetic|cuantic|"
+               r"vibracion|manifestar|abundancia|ley\s+de\s+atraccion|reiki|"
+               r"chakra|alma\s+gemela|el\s+universo\s+conspira|sanacion|"
+               r"holistic|frecuencia\s+vibratoria)", re.I),
+    re.compile(r"^[^a-z\n]{14,}$", re.M),   # titular en mayusculas sostenidas
+)
+
+# Cuentas que no son una voz: editoriales, medios, catedras, instituciones.
+INSTITUCION = re.compile(
+    r"\b(editorial|revista|universidad|facultad|instituto|colegio|libreria|"
+    r"radio|diario|periodico|noticias|redaccion|agencia|fundacion|asociacion|"
+    r"congreso|jornadas|seminario\s+de|maestria|licenciatura|posgrado|catedra|"
+    r"academia|festival|feria|coordinadora|colectivo|sindicato|partido|"
+    r"portal|podcast|canal\s+de|oficial|somos\s+un|somos\s+una)\b", re.I)
 
 MARCAS_ACADEMICAS = (
     re.compile(r"\(\d{4}\)"),                 # (1975)
@@ -144,6 +181,77 @@ def densidad_academica(textos):
         return 0.0
     con_marca = sum(1 for t in textos if any(r.search(t) for r in MARCAS_ACADEMICAS))
     return con_marca / len(textos)
+
+
+def densidad_autoayuda(textos):
+    if not textos:
+        return 0.0
+    con_marca = sum(1 for t in textos if any(r.search(t) for r in AUTOAYUDA))
+    return con_marca / len(textos)
+
+
+def topicalidad(textos):
+    """Fraccion de posts que tocan el campo. Es la aduana, no el ranking."""
+    if not textos:
+        return 0.0
+    dentro = sum(1 for t in textos if any(w in CAMPO for w in tokenizar(t)))
+    return dentro / len(textos)
+
+
+def densidad_link(textos):
+    """
+    Fraccion de posts con enlace. Separa la voz de la marca mejor que cualquier
+    palabra clave: quien escribe postea texto, quien promociona postea enlaces.
+    La referencia esta en 0,03; los medios y las marcas, entre 0,50 y 1,00.
+    """
+    if not textos:
+        return 0.0
+    return sum(1 for t in textos if "http" in t) / len(textos)
+
+
+def pesos_distintivos(lex_ref, lex_pool, minimo=40, tope=400):
+    """
+    Que palabras distinguen a la referencia del monton, por log-odds con prior
+    informativo (Monroe, Colaresi y Quinn). El coseno plano no alcanza: "amor" y
+    "vida" las usa tanto ella como cualquier cuenta de autoayuda, y son
+    justamente las que inflaban el puntaje equivocado.
+    """
+    n_ref = sum(lex_ref.values())
+    n_pool = sum(lex_pool.values())
+    if not n_ref or not n_pool:
+        return {}
+    a0 = 0.01
+    z = {}
+    for w in set(lex_ref) | set(lex_pool):
+        r, p = lex_ref.get(w, 0), lex_pool.get(w, 0)
+        if r + p < minimo or r == 0:
+            continue
+        lr = math.log((r + a0) / (n_ref - r + a0))
+        lp = math.log((p + a0) / (n_pool - p + a0))
+        var = 1 / (r + a0) + 1 / (p + a0)
+        valor = (lr - lp) / math.sqrt(var)
+        if valor > 0:
+            z[w] = valor
+    return dict(sorted(z.items(), key=lambda kv: -kv[1])[:tope])
+
+
+def afinidad_firma(lex_cand, pesos):
+    """
+    Cuanto de la firma lexica de la referencia reaparece en el candidato.
+    Se pondera por el peso de cada termino y se satura por termino, para que
+    repetir una sola palabra mil veces no simule parecido.
+    """
+    total = sum(pesos.values())
+    if not total or not lex_cand:
+        return 0.0
+    n_cand = sum(lex_cand.values()) or 1
+    acumulado = 0.0
+    for w, peso in pesos.items():
+        tasa = lex_cand.get(w, 0) / n_cand
+        # 0.002 = dos apariciones cada mil palabras alcanza para dar el termino
+        # por presente; mas que eso no suma.
+        acumulado += peso * min(1.0, tasa / 0.002)
+    return acumulado / total
 
 
 def largo_mediano(textos):
@@ -295,22 +403,30 @@ def traer_muestras(sesion, headers, handles, cache_ruta):
 
 
 def etiquetar(lexico):
-    """Etiqueta tematica gruesa, por el vocabulario que domina."""
+    """
+    Etiqueta tematica gruesa, por el vocabulario que domina.
+
+    Las familias llevan solo terminos propios del campo. Con palabras genericas
+    ("mundo", "sentido", "vida") la etiqueta de filosofia se comia a todas.
+    """
     familias = {
-        "psicoanálisis": "deseo sujeto goce inconsciente analisis pulsion transferencia "
-                         "lacan freud sintoma falta significante analista".split(),
-        "filosofía": "pensamiento filosofia verdad existencia ser tiempo etica politica "
-                     "nietzsche heidegger sentido mundo".split(),
-        "psicología / clínica": "terapia paciente ansiedad emocional emociones trauma "
-                                "psicologia mental conducta apego duelo".split(),
-        "literatura / escritura": "libro leer escribir poesia poema literatura novela "
-                                  "autor lectura escritura".split(),
+        "psicoanálisis": "psicoanalisis psicoanalitico analista inconsciente goce "
+                         "pulsion transferencia lacan freud sintoma significante "
+                         "sujeto deseo falta".split(),
+        "filosofía": "filosofia filosofico nietzsche heidegger spinoza deleuze foucault "
+                     "ontologia metafisica etica epistemologia existencialismo "
+                     "estoicismo platon aristoteles".split(),
+        "psicología / clínica": "terapia terapeuta paciente psicologia psicologo psicologa "
+                                "ansiedad emocional emociones trauma apego conducta "
+                                "consulta psiquiatria diagnostico".split(),
+        "literatura / escritura": "poesia poema literatura novela cuento verso escritura "
+                                  "escritor escritora narrativa lectura prosa".split(),
     }
     total = sum(lexico.values()) or 1
     puntajes = {nombre: sum(lexico.get(w, 0) for w in palabras) / total
                 for nombre, palabras in familias.items()}
     mejor, valor = max(puntajes.items(), key=lambda kv: kv[1])
-    return mejor if valor > 0.004 else "general"
+    return mejor if valor > 0.003 else "reflexión general"
 
 
 def main():
@@ -323,6 +439,17 @@ def main():
     ap.add_argument("--dir", default=".")
     ap.add_argument("--sin-bajar", action="store_true",
                     help="usa solo lo que ya esta en cache, no pide nada a la API")
+    ap.add_argument("--largo-min", type=int, default=50,
+                    help="largo mediano minimo de post, en caracteres (default: 50)")
+    ap.add_argument("--largo-max", type=int, default=700,
+                    help="largo mediano maximo; arriba de eso es otro genero (default: 700)")
+    ap.add_argument("--max-autoayuda", type=float, default=0.25,
+                    help="fraccion maxima de posts con marcas de autoayuda (default: 0.25)")
+    ap.add_argument("--min-topicalidad", type=float, default=0.15,
+                    help="fraccion minima de posts que tocan el campo (default: 0.15)")
+    ap.add_argument("--max-links", type=float, default=0.45,
+                    help="fraccion maxima de posts con enlace; arriba de eso es una "
+                         "marca o un medio, no una voz (default: 0.45)")
     args = ap.parse_args()
 
     key = os.environ.get("TWITTERAPI_IO_KEY")
@@ -382,20 +509,15 @@ def main():
         print("\nMuestras de posts:")
         cache, bajados = traer_muestras(sesion, headers, handles, cache_ruta)
 
-    # ---- IDF sobre el conjunto de candidatos: castiga lo que dicen todos ----
-    docs = {}
+    # ---- Firma lexica de la referencia contra el pool ----
+    lex_pool = Counter()
     for c in pasan:
-        h = c["_handle"]
-        textos = [t["text"] for t in cache.get(h, [])
-                  if not t.get("esRT") and t.get("text")]
-        if textos:
-            docs[h] = textos
-    n_docs = len(docs) + 1
-    apariciones = Counter()
-    for h, textos in docs.items():
-        apariciones.update(set(tokenizar(" ".join(textos))))
-    apariciones.update(set(lex_ref))
-    idf = {w: math.log(n_docs / (1 + n)) + 1.0 for w, n in apariciones.items()}
+        for t in cache.get(c["_handle"], []):
+            if not t.get("esRT") and t.get("text"):
+                lex_pool.update(tokenizar(t["text"]))
+    pesos = pesos_distintivos(lex_ref, lex_pool)
+    print(f"\nFirma lexica: {len(pesos)} terminos distintivos. Los 12 primeros: "
+          + ", ".join(list(pesos)[:12]))
 
     # ---- Puntaje ----
     hace_seis_meses = datetime.now(timezone.utc) - timedelta(days=180)
@@ -426,7 +548,38 @@ def main():
             descartes2["sin texto util"] += 1
             continue
 
-        afinidad = coseno(lex_ref, lex, idf)
+        # ---- Aduanas: esto no descuenta puntos, deja afuera ----
+        # Un ensayo motivacional de 3.000 caracteres no es "un poco menos
+        # parecido" que un post de 160: es otro genero. Descontarle un cuarto
+        # de punto, como hacia la version anterior, lo dejaba primero igual.
+        largo = largo_mediano(textos)
+        if largo > args.largo_max or largo < args.largo_min:
+            descartes2[f"largo mediano fuera de {args.largo_min}-{args.largo_max} car."] += 1
+            continue
+
+        autoayuda = densidad_autoayuda(textos)
+        if autoayuda > args.max_autoayuda:
+            descartes2["registro de autoayuda o pseudociencia"] += 1
+            continue
+
+        topico = topicalidad(textos)
+        if topico < args.min_topicalidad:
+            descartes2["no habla del campo (tema ajeno)"] += 1
+            continue
+
+        perfil_texto = ((campo_perfil(c, "description", defecto="") or "") + " "
+                        + (campo_perfil(c, "name", defecto="") or ""))
+        if INSTITUCION.search(normalizar(perfil_texto)):
+            descartes2["institucion o medio, no una voz"] += 1
+            continue
+
+        links = densidad_link(textos)
+        if links > args.max_links:
+            descartes2["postea mas enlaces que texto (marca o medio)"] += 1
+            continue
+
+        # ---- Ejes ----
+        afinidad = afinidad_firma(lex, pesos)
 
         # Registro: la jerga por encima de la referencia penaliza; por debajo, no.
         jerga = densidad_jerga(textos)
@@ -436,14 +589,21 @@ def main():
         acad = densidad_academica(textos)
         pena_acad = min(1.0, max(0.0, acad - acad_ref) / 0.15)
 
-        largo = largo_mediano(textos)
         # Distancia de largo en escala log: 60 vs 240 caracteres es otro genero.
-        pena_largo = min(1.0, abs(math.log((largo or 1) / max(largo_ref, 1))) / 1.6)
+        pena_largo = min(1.0, abs(math.log((largo or 1) / max(largo_ref, 1))) / 1.2)
+        pena_autoayuda = min(1.0, autoayuda / max(args.max_autoayuda, 0.01))
 
-        registro = 1.0 - (0.45 * pena_jerga + 0.30 * pena_acad + 0.25 * pena_largo)
-        puntaje = afinidad * (0.55 + 0.45 * registro)
+        registro = 1.0 - (0.30 * pena_jerga + 0.20 * pena_acad
+                          + 0.30 * pena_largo + 0.20 * pena_autoayuda)
+        registro = max(0.0, registro)
+        # Sin piso: una cuenta con el registro equivocado no conserva medio
+        # puntaje por hablar del mismo tema.
+        puntaje = afinidad * registro
 
         filas.append({
+            "autoayuda": autoayuda,
+            "topicalidad": topico,
+            "links": links,
             "handle": campo_perfil(c, "userName", "screen_name", defecto=h),
             "nombre": campo_perfil(c, "name", defecto=""),
             "bio": (campo_perfil(c, "description", defecto="") or "").replace("\n", " ").strip(),

@@ -199,6 +199,70 @@ CONSULTAS_DEFECTO = [
     'amor "el otro" lang:es -filter:replies min_faves:25',
 ]
 
+# Segunda tanda: pares de terminos que la cuenta de referencia usa junta, sacados
+# de su firma lexica real (log-odds contra el pool). Las consultas de arriba
+# encuentran el tema; estas encuentran el registro, que es lo dificil. El umbral
+# de likes va bajo a proposito: las cuentas que mejor pegan son chicas.
+CONSULTAS_REGISTRO = [
+    '"el deseo" "la falta" lang:es -filter:replies min_faves:5',
+    '"el lazo" "el otro" lang:es -filter:replies min_faves:3',
+    'sostener "el deseo" lang:es -filter:replies min_faves:5',
+    '"la escucha" analista lang:es -filter:replies min_faves:3',
+    '"el síntoma" "el sujeto" lang:es -filter:replies min_faves:5',
+    '"lo real" "lo simbólico" lang:es -filter:replies min_faves:3',
+    '"la angustia" "el deseo" lang:es -filter:replies min_faves:5',
+    '"el duelo" elaboración lang:es -filter:replies min_faves:3',
+    'transferencia "el analista" lang:es -filter:replies min_faves:3',
+    '"la palabra" "el silencio" lang:es -filter:replies min_faves:5',
+    '"posición subjetiva" lang:es -filter:replies min_faves:2',
+    '"el malestar" cultura lang:es -filter:replies min_faves:5',
+    '"un analizante" OR "en análisis" lang:es -filter:replies min_faves:3',
+    '"el amor" "el deseo" psicoanálisis lang:es -filter:replies min_faves:5',
+    '"hacer lazo" lang:es -filter:replies min_faves:2',
+    '"eso que insiste" OR "lo que insiste" lang:es -filter:replies min_faves:3',
+    '"el cuerpo" "la palabra" lang:es -filter:replies min_faves:5',
+    'melancolía duelo Freud lang:es -filter:replies min_faves:3',
+    '"no hay relación sexual" OR "no todo" Lacan lang:es -filter:replies min_faves:3',
+    '"la neurosis" OR "lo inconsciente" lang:es -filter:replies min_faves:5',
+]
+
+
+def traer_co_seguidos(sesion, headers, semillas, paginas_max):
+    """
+    A quien siguen las cuentas que ya sabemos que pegan.
+
+    Es el canal que mejor encuentra el racimo: si diez cuentas afines siguen a
+    la misma persona, esa persona casi seguro pertenece al mismo mundo. Se
+    limita a las primeras paginas por semilla porque el costo escala rapido.
+    """
+    from collections import Counter
+    veces = Counter()
+    perfiles = {}
+    for i, semilla in enumerate(semillas, 1):
+        cursor, paginas = None, 0
+        vistos_semilla = set()
+        while paginas < paginas_max:
+            params = {"userName": semilla, "pageSize": 200}
+            if cursor:
+                params["cursor"] = cursor
+            data = pedir(sesion, headers, "user/followings", params)
+            lote = data.get("followings") or []
+            for p in lote:
+                h = (p.get("userName") or p.get("screen_name") or "").lower()
+                if not h or h in vistos_semilla:
+                    continue
+                vistos_semilla.add(h)
+                veces[h] += 1
+                perfiles.setdefault(h, p)
+            paginas += 1
+            if not data.get("has_next_page") or not data.get("next_cursor"):
+                break
+            cursor = data["next_cursor"]
+            time.sleep(0.2)
+        print(f"  {i}/{len(semillas)} @{semilla}: {len(vistos_semilla)} seguidos", flush=True)
+        time.sleep(0.3)
+    return veces, perfiles
+
 
 def main():
     ap = argparse.ArgumentParser(
@@ -215,6 +279,16 @@ def main():
                     help="paginas de busqueda por consulta (default: 2, ~20 tweets c/u)")
     ap.add_argument("--min-menciones", type=int, default=2,
                     help="minimo de menciones para traer el perfil (default: 2)")
+    ap.add_argument("--semillas",
+                    help="handles separados por coma cuyos seguidos se agregan al pool; "
+                         "usalos despues de una primera ronda, con las cuentas que ya validaste")
+    ap.add_argument("--paginas-co", type=int, default=3,
+                    help="paginas de seguidos por semilla (default: 3, o sea 600 cuentas)")
+    ap.add_argument("--min-co", type=int, default=2,
+                    help="cuantas semillas tienen que seguir a una cuenta para admitirla "
+                         "(default: 2)")
+    ap.add_argument("--registro", action="store_true",
+                    help="usa tambien las consultas de registro, mas finas que las de tema")
     args = ap.parse_args()
 
     key = os.environ.get("TWITTERAPI_IO_KEY")
@@ -231,6 +305,20 @@ def main():
 
     candidatos = {}   # handle en minusculas -> perfil crudo
     origenes = {}     # handle en minusculas -> set de canales
+
+    # Lo ya descubierto en corridas anteriores se conserva: cada candidato del
+    # archivo costo un pedido, y volver a pedirlo no lo mejora.
+    if salida.exists():
+        for linea in salida.open(encoding="utf-8"):
+            try:
+                o = json.loads(linea)
+            except json.JSONDecodeError:
+                continue
+            h = o.get("_handle")
+            if h:
+                candidatos[h] = o
+                origenes[h] = set(o.get("_origen", ()))
+        print(f"Reanudando: {len(candidatos)} candidatos ya descubiertos.")
     tweets_vistos = 0
     perfiles_pedidos = 0
 
@@ -266,12 +354,27 @@ def main():
             origenes.setdefault(h, set()).add("menciones")
 
     if not args.sin_busqueda:
-        print(f"\n[3/3] Busqueda tematica ({len(CONSULTAS_DEFECTO)} consultas)")
+        consultas = list(CONSULTAS_DEFECTO)
+        if args.registro:
+            consultas += CONSULTAS_REGISTRO
+        print(f"\n[3/4] Busqueda ({len(consultas)} consultas)")
         perfiles, vistos = autores_por_busqueda(
-            sesion, headers, CONSULTAS_DEFECTO, args.paginas_por_consulta)
+            sesion, headers, consultas, args.paginas_por_consulta)
         tweets_vistos += vistos
         for h, p in perfiles.items():
             sumar(h, p, "busqueda")
+
+    if args.semillas:
+        semillas = [s.strip().lstrip("@") for s in args.semillas.split(",") if s.strip()]
+        print(f"\n[4/4] Seguidos en comun de {len(semillas)} semillas validadas")
+        veces, perfiles_co = traer_co_seguidos(sesion, headers, semillas, args.paginas_co)
+        admitidos = 0
+        for h, n in veces.items():
+            if n >= args.min_co:
+                sumar(h, perfiles_co[h], "co-seguidos")
+                perfiles_pedidos += 1
+                admitidos += 1
+        print(f"  {len(veces)} cuentas vistas; {admitidos} seguidas por >={args.min_co} semillas")
 
     with salida.open("w", encoding="utf-8") as f:
         for h, perfil in candidatos.items():
