@@ -1,0 +1,12 @@
+# Corpus bajado de la API: pesa, cuesta plata volver a bajarlo, y el contenido
+# no tiene por que vivir en el repo. Es la fuente de verdad: guardalo aparte.
+corpus/*.jsonl
+corpus/*.state.json
+
+# Documentos generados. Se entregan como archivo, no se commitean por defecto.
+corpus/*.md
+!corpus/README.md
+
+# Credenciales: nunca.
+.env
+*.key
